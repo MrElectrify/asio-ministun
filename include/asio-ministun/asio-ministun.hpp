@@ -14,7 +14,8 @@
 
 namespace asio_miniSTUN
 {
-	/// @brief Get the IP address from a STUN server
+	/// @brief Get the IP address from a STUN server. Preserves the socket's non-blocking
+	/// and connected state as long as the operation does not encounter an OS-level error
 	/// @tparam CompletionToken The completion token type
 	/// @param socket The socket to use
 	/// @param endpoint The STUN server endpoint

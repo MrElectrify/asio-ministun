@@ -65,7 +65,8 @@ namespace asio_miniSTUN::detail
 		uint32_t _xor_addr;
 	};
 
-	/// @brief Get the IP address from a STUN server
+	/// @brief Get the IP address from a STUN server. Preserves the socket's non-blocking
+	/// and connected state as long as the operation does not encounter an OS-level error
 	/// @tparam CompletionToken The completion token type
 	/// @param socket The socket to use
 	/// @param endpoint The STUN server endpoint
@@ -85,6 +86,11 @@ namespace asio_miniSTUN::detail
 				decltype(completion_handler)>(completion_handler),
 				stun_endpoint, &local_socket]() mutable -> asio::awaitable<void>
 				{
+					// fetch settings
+					error_code ignored;
+					asio::ip::udp::endpoint connected_endpoint =
+						local_socket.remote_endpoint(ignored);
+					bool non_blocking = local_socket.native_non_blocking();
 					// construct the request and response
 					const header request(message_class::request);
 					xor_mapped_address response;
@@ -96,6 +102,9 @@ namespace asio_miniSTUN::detail
 						const std::tuple<size_t, size_t> res = 
 							co_await (local_socket.async_send(request.to_const_buffers(), asio::use_awaitable) &&
 							local_socket.async_receive(response.to_buffers(), asio::use_awaitable));
+						// disconnect and restore non blocking
+						co_await local_socket.async_connect(connected_endpoint, asio::use_awaitable);
+						local_socket.native_non_blocking(non_blocking);
 						// make sure we read the expected size and all attributes are right
 						if (std::get<1>(res) != response.size() ||
 							response.headers().type() != message_class::response_success)
