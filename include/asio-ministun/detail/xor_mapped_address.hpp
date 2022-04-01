@@ -69,27 +69,22 @@ namespace asio_miniSTUN::detail
 	/// @tparam CompletionToken The completion token type
 	/// @param socket The socket to use
 	/// @param endpoint The STUN server endpoint
-	/// @param timeout The timeout
 	/// @param token The completion token
-	/// @return DEDUCED. Handler must be in the form void(std::optional<asio::ip::udp::endpoint>, asio::error_code)
+	/// @return DEDUCED. Handler must be in the form void(asio::error_code, asio::ip::udp::endpoint)
 	template<typename CompletionToken>
-	auto async_get_address_impl(asio::ip::udp::socket& socket, asio::ip::udp::endpoint endpoint,
-		std::chrono::system_clock::duration timeout, CompletionToken&& token)
+	auto async_get_address_impl(asio::ip::udp::socket& socket,
+		asio::ip::udp::endpoint endpoint, CompletionToken&& token)
 	{
 		auto initiation = [](auto&& completion_handler,
 			asio::ip::udp::socket& local_socket,
-			asio::ip::udp::endpoint stun_endpoint,
-			std::chrono::system_clock::duration op_timeout)
+			asio::ip::udp::endpoint stun_endpoint)
 		{
 			// spawn on the executor
 			asio::co_spawn(local_socket.get_executor(),
 				[completion_handler = std::forward<
 				decltype(completion_handler)>(completion_handler),
-				stun_endpoint, &local_socket, op_timeout]() mutable -> asio::awaitable<void>
+				stun_endpoint, &local_socket]() mutable -> asio::awaitable<void>
 				{
-					// create a timeout timer
-					asio::system_timer timer(local_socket.get_executor());
-					timer.expires_from_now(op_timeout);
 					// construct the request and response
 					const header request(message_class::request);
 					xor_mapped_address response;
@@ -98,17 +93,11 @@ namespace asio_miniSTUN::detail
 						using namespace asio::experimental::awaitable_operators;
 						// connect to the socket so we only receive from the target
 						co_await local_socket.async_connect(stun_endpoint, asio::use_awaitable);
-						const std::variant<std::monostate, std::tuple<size_t, size_t>> res = 
-							co_await (timer.async_wait(asio::use_awaitable) || 
-							(local_socket.async_send(request.to_const_buffers(), asio::use_awaitable) &&
-							local_socket.async_receive(response.to_buffers(), asio::use_awaitable)));
-						// check for timeout
-						if (res.index() == 0)
-							co_return completion_handler(
-								asio_miniSTUN::make_error_code(errc::timed_out),
-								asio::ip::udp::endpoint());
+						const std::tuple<size_t, size_t> res = 
+							co_await (local_socket.async_send(request.to_const_buffers(), asio::use_awaitable) &&
+							local_socket.async_receive(response.to_buffers(), asio::use_awaitable));
 						// make sure we read the expected size and all attributes are right
-						if (std::get<1>(std::get<1>(res)) != response.size() ||
+						if (std::get<1>(res) != response.size() ||
 							response.headers().type() != message_class::response_success)
 							co_return completion_handler(
 								asio_miniSTUN::make_error_code(errc::bad_message),
@@ -125,7 +114,7 @@ namespace asio_miniSTUN::detail
 		};
 		return asio::async_initiate<CompletionToken,
 			void(asio::error_code, asio::ip::udp::endpoint)>(
-			initiation, token, std::ref(socket), endpoint, timeout);
+			initiation, token, std::ref(socket), endpoint);
 	}
 }
 

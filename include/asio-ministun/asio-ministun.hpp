@@ -18,14 +18,13 @@ namespace asio_miniSTUN
 	/// @tparam CompletionToken The completion token type
 	/// @param socket The socket to use
 	/// @param endpoint The STUN server endpoint
-	/// @param timeout The timeout
 	/// @param token The completion token
-	/// @return DEDUCED. Handler must be in the form void(std::optional<asio::ip::udp::endpoint>, asio::error_code)
+	/// @return DEDUCED. Handler must be in the form void(asio::error_code, asio::ip::udp::endpoint)
 	template<typename CompletionToken>
-	auto async_get_address(asio::ip::udp::socket& socket, asio::ip::udp::endpoint endpoint,
-		std::chrono::system_clock::duration timeout, CompletionToken&& token)
+	auto async_get_address(asio::ip::udp::socket& socket,
+		asio::ip::udp::endpoint endpoint, CompletionToken&& token)
 	{
-		return detail::async_get_address_impl(socket, endpoint, timeout,
+		return detail::async_get_address_impl(socket, endpoint,
 			std::forward<CompletionToken>(token));
 	}
 }

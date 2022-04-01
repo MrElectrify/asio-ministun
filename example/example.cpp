@@ -37,14 +37,27 @@ int main(int argc, char const* argv[])
 	// open a socket
 	asio::ip::udp::socket socket(ctx, asio::ip::udp::v4());
 	// resolve from the first endpoint with a 2 second timeout
-	std::future<asio::ip::udp::endpoint> our_endpoint_fut = asio_miniSTUN::async_get_address(
-		socket, *endpoints.begin(), std::chrono::seconds(2), asio::use_future);
+	std::future<std::optional<asio::ip::udp::endpoint>> our_endpoint_fut = asio::co_spawn(ctx,
+		[&socket, &endpoints, &ctx]() -> asio::awaitable<std::optional<asio::ip::udp::endpoint>> {
+			using namespace asio::experimental::awaitable_operators;
+			// create a timer
+			asio::system_timer timer(ctx);
+			timer.expires_from_now(std::chrono::seconds(2));
+			const std::variant<std::monostate, asio::ip::udp::endpoint> result = 
+				co_await (timer.async_wait(asio::use_awaitable) ||
+					asio_miniSTUN::async_get_address(
+					socket, *endpoints.begin(), asio::use_awaitable));
+			co_return (result.index() == 0) ? std::nullopt : std::make_optional(std::get<1>(result));
+		}, asio::use_future);
 	// run the ctx
 	ctx.run();
 	try
 	{
-		const asio::ip::udp::endpoint our_endpoint = our_endpoint_fut.get();
-		std::cout << "Our endpoint: " << our_endpoint << '\n';
+		const std::optional<asio::ip::udp::endpoint> our_endpoint = our_endpoint_fut.get();
+		if (our_endpoint.has_value() == true)
+			std::cout << "Our endpoint: " << our_endpoint.value() << '\n';
+		else
+			std::cerr << "Timed out fetching our endpoint\n";
 	}
 	catch (const asio_miniSTUN::system_error& error)
 	{
