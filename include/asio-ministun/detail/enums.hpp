@@ -10,7 +10,7 @@
 // STL includes
 #include <cstdint>
 
-AMS_NAMESPACE
+namespace asio_miniSTUN::detail
 {
 	/// @brief The message class
 	enum class message_class

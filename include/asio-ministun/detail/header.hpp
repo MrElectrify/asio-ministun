@@ -13,7 +13,7 @@
 #include <asio-ministun/detail/enums.hpp>
 #include <asio-ministun/detail/util.hpp>
 
-AMS_NAMESPACE::detail
+namespace asio_miniSTUN::detail
 {
 	/// @brief The header of a STUN message
 	class header
@@ -31,11 +31,22 @@ AMS_NAMESPACE::detail
 			std::fill(_transaction_id.begin(), _transaction_id.end(), 0);
 		}
 
-		/// @return The type of the message
-		constexpr message_class type() noexcept
+		/// @return The cookie used with the STUN response
+		uint32_t cookie() const noexcept { return from_net_l(_cookie); }
+
+		/// @return The size of the header
+		constexpr size_t size() const noexcept
 		{
+			return sizeof(_type) + sizeof(_length) +
+				sizeof(_cookie) + _transaction_id.size();
+		}
+
+		/// @return The type of the message
+		constexpr message_class type() const noexcept
+		{
+			const uint16_t host_type = from_net_s(_type);
 			return static_cast<message_class>(
-				(_type >> 4) | (_type >> 7));
+				((host_type >> 4) & 0b01) | ((host_type >> 7)) & 0b10);
 		}
 
 		/// @return The header as const buffers
@@ -43,9 +54,9 @@ AMS_NAMESPACE::detail
 		{
 			return
 			{
-				asio::buffer(&_type, 2),
-				asio::buffer(&_length, 2),
-				asio::buffer(&_cookie, 4),
+				asio::buffer(&_type, sizeof(_type)),
+				asio::buffer(&_length, sizeof(_length)),
+				asio::buffer(&_cookie, sizeof(_cookie)),
 				asio::buffer(_transaction_id)
 			};
 		}
@@ -55,9 +66,9 @@ AMS_NAMESPACE::detail
 		{
 			return
 			{
-				asio::buffer(&_type, 2),
-				asio::buffer(&_length, 2),
-				asio::buffer(&_cookie, 4),
+				asio::buffer(&_type, sizeof(_type)),
+				asio::buffer(&_length, sizeof(_length)),
+				asio::buffer(&_cookie, sizeof(_cookie)),
 				asio::buffer(_transaction_id)
 			};
 		}

@@ -13,7 +13,7 @@
 #include <bit>
 #include <cstdint>
 
-AMS_NAMESPACE::detail
+namespace asio_miniSTUN::detail
 {
 	/// @brief Concatenates arrays
 	/// @tparam Type The element type
