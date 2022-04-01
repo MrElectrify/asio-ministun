@@ -73,7 +73,7 @@ namespace asio_miniSTUN::detail
 	/// @return DEDUCED. Handler must be in the form void(asio::error_code, asio::ip::udp::endpoint)
 	template<typename CompletionToken>
 	auto async_get_address_impl(asio::ip::udp::socket& socket,
-		asio::ip::udp::endpoint endpoint, CompletionToken&& token)
+		const asio::ip::udp::endpoint& endpoint, CompletionToken&& token)
 	{
 		auto initiation = [](auto&& completion_handler,
 			asio::ip::udp::socket& local_socket,
