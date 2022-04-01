@@ -12,6 +12,10 @@ option(AMS_BUILD_EXAMPLE "Build the asio-multiSTUN example" OFF)
 # Create the target
 add_library(asio-ministun INTERFACE)
 target_include_directories(asio-ministun INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(asio-ministun INTERFACE cxx_std_20)
+if (AMS_USE_BOOST)
+	target_compile_definitions(asio-ministun INTERFACE AMS_USE_BOOST=1)
+endif()
 
 if (AMS_BUILD_EXAMPLE)
 	# You must set an asio path for examples
