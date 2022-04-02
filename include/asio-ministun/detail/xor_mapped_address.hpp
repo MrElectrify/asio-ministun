@@ -76,54 +76,83 @@ namespace asio_miniSTUN::detail
 	auto async_get_address_impl(asio::ip::udp::socket& socket,
 		const asio::ip::udp::endpoint& endpoint, CompletionToken&& token)
 	{
-		auto initiation = [](auto&& completion_handler,
-			asio::ip::udp::socket& local_socket,
-			asio::ip::udp::endpoint stun_endpoint)
+		enum class State
 		{
-			// spawn on the executor
-			asio::co_spawn(local_socket.get_executor(),
-				[completion_handler = std::forward<
-				decltype(completion_handler)>(completion_handler),
-				stun_endpoint, &local_socket]() mutable -> asio::awaitable<void>
-				{
-					// fetch settings
-					error_code ignored;
-					asio::ip::udp::endpoint connected_endpoint =
-						local_socket.remote_endpoint(ignored);
-					bool non_blocking = local_socket.native_non_blocking();
-					// construct the request and response
-					const header request(message_class::request);
-					xor_mapped_address response;
-					try
-					{
-						using namespace asio::experimental::awaitable_operators;
-						// connect to the socket so we only receive from the target
-						co_await local_socket.async_connect(stun_endpoint, asio::use_awaitable);
-						const std::tuple<size_t, size_t> res = 
-							co_await (local_socket.async_send(request.to_const_buffers(), asio::use_awaitable) &&
-							local_socket.async_receive(response.to_buffers(), asio::use_awaitable));
-						// disconnect and restore non blocking
-						co_await local_socket.async_connect(connected_endpoint, asio::use_awaitable);
-						local_socket.native_non_blocking(non_blocking);
-						// make sure we read the expected size and all attributes are right
-						if (std::get<1>(res) != response.size() ||
-							response.headers().type() != message_class::response_success)
-							co_return completion_handler(
-								asio_miniSTUN::make_error_code(errc::bad_message),
-								asio::ip::udp::endpoint());
-						// read the endpoint and return it
-						completion_handler({}, asio::ip::udp::endpoint(
-							response.addr(), response.port()));
-					}
-					catch (const system_error& e)
-					{
-						completion_handler(e.code(), asio::ip::udp::endpoint());
-					}
-			}, asio::detached);
+			Connect,
+			SendRequest,
+			ReceiveResponse,
+			ConnectOriginal,
+			Cleanup,
 		};
-		return asio::async_initiate<CompletionToken,
+		// back-up socket traits
+		error_code ignored;
+		asio::ip::udp::endpoint connected_endpoint = socket.remote_endpoint(ignored);
+		bool non_blocking = socket.native_non_blocking();
+		// form request and response
+		auto request = std::make_unique<header>(message_class::request);
+		auto response = std::make_unique<xor_mapped_address>();
+		return asio::async_compose<CompletionToken,
 			void(asio::error_code, asio::ip::udp::endpoint)>(
-			initiation, token, std::ref(socket), endpoint);
+				[
+					&socket,
+					endpoint,
+					connected_endpoint,
+					non_blocking,
+					request = std::move(request),
+					response = std::move(response),
+					state = State::Connect
+				]
+				(
+					auto& self,
+					const error_code& ec = {},
+					size_t bytes_transferred = 0
+				) mutable {
+					// make sure we don't have any errors
+					if (ec)
+						return self.complete(ec, asio::ip::udp::endpoint());
+					switch (state)
+					{
+					case State::Connect:
+					{
+						// fetch settings
+						state = State::SendRequest;
+						return socket.async_connect(endpoint, std::move(self));
+					}
+					case State::SendRequest:
+					{
+						state = State::ReceiveResponse;
+						return socket.async_send(request->to_const_buffers(), std::move(self));
+					}
+					case State::ReceiveResponse:
+					{
+						// check sent request
+						if (bytes_transferred != request->size())
+							return self.complete(asio_miniSTUN::make_error_code(errc::bad_message),
+								asio::ip::udp::endpoint());
+						state = State::ConnectOriginal;
+						return socket.async_receive(response->to_buffers(), std::move(self));
+					}
+					case State::ConnectOriginal:
+					{
+						// check received response
+						if (bytes_transferred != response->size() ||
+							response->headers().type() != message_class::response_success)
+							return self.complete(asio_miniSTUN::make_error_code(errc::bad_message),
+								asio::ip::udp::endpoint());
+						state = State::Cleanup;
+						return socket.async_connect(connected_endpoint, std::move(self));
+					}
+					case State::Cleanup:
+					{
+						// restore non-blocking
+						socket.native_non_blocking(non_blocking);
+						// call the success handler
+						return self.complete({}, asio::ip::udp::endpoint(
+							response->addr(), response->port()));
+					}
+					}
+				},
+			token, socket);
 	}
 }
 
