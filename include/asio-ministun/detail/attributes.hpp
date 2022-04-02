@@ -22,8 +22,8 @@ namespace asio_miniSTUN::detail
 		attributes() = default;
 		/// @param msg_type The message type
 		attributes(message_type msg_type, uint16_t length) noexcept :
-			_msg_type(to_net_s(static_cast<uint16_t>(msg_type))),
-			_length(to_net_s(length)) {}
+			_msg_type(to_net(static_cast<uint16_t>(msg_type))),
+			_length(to_net(length)) {}
 
 		/// @return The size of an attribute
 		constexpr size_t size() const noexcept { return sizeof(_msg_type) + sizeof(_length); }
@@ -49,7 +49,7 @@ namespace asio_miniSTUN::detail
 		}
 
 		/// @return The message type
-		message_type type() const noexcept { return static_cast<message_type>(from_net_s(_msg_type)); }
+		message_type type() const noexcept { return static_cast<message_type>(from_net(_msg_type)); }
 	private:
 		uint16_t _msg_type;
 		uint16_t _length;

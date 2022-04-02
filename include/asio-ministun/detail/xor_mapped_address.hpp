@@ -28,7 +28,7 @@ namespace asio_miniSTUN::detail
 		/// @return The response address
 		asio::ip::address_v4 addr() const noexcept
 		{
-			return asio::ip::address_v4(from_net_l(_xor_addr) ^ _header.cookie());
+			return asio::ip::address_v4(from_net(_xor_addr) ^ _header.cookie());
 		}
 
 		/// @return The headers
@@ -37,7 +37,7 @@ namespace asio_miniSTUN::detail
 		/// @return The response port
 		uint16_t port() const noexcept
 		{
-			return from_net_s(_xor_port) ^ (_header.cookie() >> 16);
+			return from_net(_xor_port) ^ (_header.cookie() >> 16);
 		}
 
 		/// @return The size of the xor_mapped_address response

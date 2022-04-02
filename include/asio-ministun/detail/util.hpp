@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <type_traits>
 
 namespace asio_miniSTUN::detail
 {
@@ -31,29 +32,37 @@ namespace asio_miniSTUN::detail
 		return result;
 	}
 
-	/// @brief Converts a host long to net long
+	/// @brief Converts a host integral to net integral
+	/// @tparam T The integral type
 	/// @param val The host long
 	/// @return The net long
-	constexpr uint16_t to_net_s(uint16_t val) noexcept
+	template<typename T>
+	inline constexpr T to_net(T val) noexcept requires(std::is_integral_v<T> && sizeof(T) == 4)
 	{
 		if constexpr (std::endian::native == std::endian::big)
 			return val;
-		return val >> 8 | (val << 8) & 0xff00;
+		return (val & 0xff) << 24 |
+			((val >> 8) & 0xff) << 16 |
+			((val >> 16) & 0xff) << 8 |
+			(val >> 24) & 0xff;
 	}
-	constexpr uint16_t from_net_s(uint16_t val) noexcept { return to_net_s(val); }
-	/// @brief Converts a host long to net long
+	/// @brief Converts a host integral to net integral
+	/// @tparam T The integral type
 	/// @param val The host long
 	/// @return The net long
-	constexpr uint32_t to_net_l(uint32_t val) noexcept
+	template<typename T>
+	inline constexpr T to_net(T val) noexcept requires(std::is_integral_v<T> && sizeof(T) == 2)
 	{
 		if constexpr (std::endian::native == std::endian::big)
 			return val;
-		return val >> 24 |
-			(val >> 8) & 0xff00 |
-			(val << 8) & 0xff0000 |
-			(val << 24) & 0xff000000;
+		return (val & 0xff) << 8 |
+			(val >> 8) & 0xff;
 	}
-	constexpr uint32_t from_net_l(uint32_t val) noexcept { return to_net_l(val); }
+	/// @brief Converts a net long to host long
+	/// @param val The net long
+	/// @return The host long
+	template<typename T>
+	inline constexpr T from_net(T val) noexcept requires(std::is_integral_v<T>) { return to_net(val); }
 }
 
 #endif

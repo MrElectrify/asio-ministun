@@ -19,20 +19,20 @@ namespace asio_miniSTUN::detail
 	class header
 	{
 	private:
-		constexpr static uint32_t COOKIE = to_net_l(0x2112A442);
+		constexpr static uint32_t COOKIE = to_net(0x2112A442);
 	public:
 		header() = default;
 		/// @param msg_type The type of message
 		header(message_class msg_type) noexcept : _length(0), _cookie(COOKIE) 
 		{
 			// binding message
-			_type = to_net_s((static_cast<uint16_t>(msg_type) & 0b01) << 4 |
+			_type = to_net<uint16_t>((static_cast<uint16_t>(msg_type) & 0b01) << 4 |
 				(static_cast<uint16_t>(msg_type) & 0b10) << 7 | 1);
 			std::fill(_transaction_id.begin(), _transaction_id.end(), 0);
 		}
 
 		/// @return The cookie used with the STUN response
-		uint32_t cookie() const noexcept { return from_net_l(_cookie); }
+		uint32_t cookie() const noexcept { return from_net(_cookie); }
 
 		/// @return The size of the header
 		constexpr size_t size() const noexcept
@@ -44,7 +44,7 @@ namespace asio_miniSTUN::detail
 		/// @return The type of the message
 		constexpr message_class type() const noexcept
 		{
-			const uint16_t host_type = from_net_s(_type);
+			const uint16_t host_type = from_net(_type);
 			return static_cast<message_class>(
 				((host_type >> 4) & 0b01) | ((host_type >> 7)) & 0b10);
 		}
