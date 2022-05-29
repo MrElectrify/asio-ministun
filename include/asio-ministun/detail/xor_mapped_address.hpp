@@ -113,7 +113,9 @@ namespace asio_miniSTUN::detail
 					{
 					case State::SendRequest:
 					{
+						// set non-blocking
 						error_code ignored;
+						socket.native_non_blocking(true);
 						// ensure the socket is not already connected
 						if (socket.remote_endpoint(ignored); !ignored)
 							return self.complete(asio_miniSTUN::make_error_code(
@@ -149,6 +151,50 @@ namespace asio_miniSTUN::detail
 					}
 				},
 			token, socket);
+	}
+
+	/// @brief Get the IP address from a STUN server. Preserves the socket's non-blocking
+	/// state as long as the operation does not encounter an OS-level error. The socket must
+	/// not be connected
+	/// @param socket The socket to use
+	/// @param endpoint The STUN server endpoint
+	/// @param timeout The socket timeout
+	/// @param token The completion token
+	/// @return The deduced address from STUN
+	asio::ip::udp::endpoint get_address_impl(asio::ip::udp::socket& socket,
+		const asio::ip::udp::endpoint& endpoint, 
+		const std::chrono::system_clock::duration& timeout, error_code& ec)
+	{
+		// ensure the socket is not already connected
+		if (socket.remote_endpoint(ec); !ec)
+			return {};
+		bool non_blocking = socket.native_non_blocking();
+		// get old timeout
+		asio::detail::socket_option::integer<SOL_SOCKET, SO_RCVTIMEO> rcv_timeout;
+		if (socket.get_option(rcv_timeout, ec))
+			return {};
+		// set the new timeout
+		if (socket.set_option(asio::detail::socket_option::integer<SOL_SOCKET, SO_RCVTIMEO>(
+			static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count())), ec))
+			return {};
+		header request(message_class::request);
+		// disable non-blocking
+		socket.native_non_blocking(false);
+		// send the request
+		if (socket.send_to(request.to_const_buffers(), endpoint, 0, ec); ec)
+			return {};
+		// receive the response until we get it from the STUN server
+		xor_mapped_address response;
+		for (asio::ip::udp::endpoint recv_endpoint; recv_endpoint != endpoint;)
+		{
+			if (socket.receive_from(response.to_buffers(), recv_endpoint, 0, ec); ec)
+				return {};
+		}
+		// return non-blocking and recv timeout
+		if (socket.native_non_blocking(non_blocking, ec) ||
+			socket.set_option(rcv_timeout, ec))
+			return {};
+		return asio::ip::udp::endpoint(response.addr(), response.port());
 	}
 }
 

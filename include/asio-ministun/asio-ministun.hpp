@@ -28,6 +28,21 @@ namespace asio_miniSTUN
 		return detail::async_get_address_impl(socket, endpoint,
 			std::forward<CompletionToken>(token));
 	}
+
+	/// @brief Get the IP address from a STUN server. Preserves the socket's non-blocking
+	/// state as long as the operation does not encounter an OS-level error. The socket must
+	/// not be connected
+	/// @param socket The socket to use
+	/// @param endpoint The STUN server endpoint
+	/// @param timeout The socket timeout
+	/// @param token The completion token
+	/// @return The deduced address from STUN
+	asio::ip::udp::endpoint get_address(asio::ip::udp::socket& socket,
+		const asio::ip::udp::endpoint& endpoint,
+		const std::chrono::system_clock::duration& timeout, error_code& ec)
+	{
+		return detail::get_address_impl(socket, endpoint, timeout, ec);
+	}
 }
 
 #endif
