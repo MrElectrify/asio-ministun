@@ -8,8 +8,10 @@
 #include <asio-ministun/detail/attributes.hpp>
 #include <asio-ministun/detail/common.hpp>
 #include <asio-ministun/detail/enums.hpp>
+#include <asio-ministun/detail/util.hpp>
 
 #include <iostream>
+#include <ranges>
 
 #ifdef AMS_USE_BOOST
 #include <boost/asio/experimental/awaitable_operators.hpp>
@@ -168,7 +170,7 @@ namespace asio_miniSTUN::detail
 		// ensure the socket is not already connected
 		if (socket.remote_endpoint(ec); !ec)
 			return {};
-		bool non_blocking = socket.native_non_blocking();
+		bool const non_blocking = socket.native_non_blocking();
 		// get old timeout
 		asio::detail::socket_option::integer<SOL_SOCKET, SO_RCVTIMEO> rcv_timeout;
 		if (socket.get_option(rcv_timeout, ec))
@@ -177,18 +179,19 @@ namespace asio_miniSTUN::detail
 		if (socket.set_option(asio::detail::socket_option::integer<SOL_SOCKET, SO_RCVTIMEO>(
 			static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count())), ec))
 			return {};
-		header request(message_class::request);
+		header const request(message_class::request);
+		xor_mapped_address response;
 		// disable non-blocking
 		socket.native_non_blocking(false);
 		// send the request
-		if (socket.send_to(request.to_const_buffers(), endpoint, 0, ec); ec)
-			return {};
-		// receive the response until we get it from the STUN server
-		xor_mapped_address response;
-		for (asio::ip::udp::endpoint recv_endpoint; recv_endpoint != endpoint;)
+		if (socket.send_to(request.to_const_buffers(), endpoint, 0, ec); !ec)
 		{
-			if (socket.receive_from(response.to_buffers(), recv_endpoint, 0, ec); ec)
-				return {};
+			// receive the response until we get it from the STUN server
+			for (asio::ip::udp::endpoint recv_endpoint; recv_endpoint != endpoint;)
+			{
+				if (socket.receive_from(response.to_buffers(), recv_endpoint, 0, ec); ec)
+					break;
+			}
 		}
 		// return non-blocking and recv timeout
 		if (socket.native_non_blocking(non_blocking, ec) ||
@@ -196,6 +199,120 @@ namespace asio_miniSTUN::detail
 			return {};
 		return asio::ip::udp::endpoint(response.addr(), response.port());
 	}
+
+#if _WIN32
+	/// @brief Get the IP address from a STUN server. Preserves the socket's non-blocking
+	/// state as long as the operation does not encounter an OS-level error. The socket must
+	/// not be connected. This is for a specialized use case (wine where asio assign/release
+	/// is needed but not suitable)
+	/// @param socket The socket to use
+	/// @param endpoint The STUN server endpoint
+	/// @param timeout The socket timeout
+	/// @param token The completion token
+	/// @return The deduced address from STUN
+	asio::ip::udp::endpoint get_address_impl(int socket,
+		const asio::ip::udp::endpoint& endpoint,
+		const std::chrono::system_clock::duration& timeout, error_code& ec)
+	{
+		// get old timeout
+		int rcv_timeout;
+		int rcv_timeout_len = sizeof(rcv_timeout);
+		if (getsockopt(socket, SOL_SOCKET, SO_RCVTIMEO,
+			reinterpret_cast<char*>(&rcv_timeout), &rcv_timeout_len) != 0)
+		{
+			ec = asio::error_code(GetLastError(), asio::system_category());
+			return {};
+		}
+		header request(message_class::request);
+		// form the buffers
+		auto buffers = collect<std::vector<WSABUF>>(request.to_const_buffers() | 
+			std::ranges::views::transform([](const asio::const_buffer& buf)
+				{
+					return WSABUF {
+						.len = static_cast<ULONG>(buf.size()),
+						.buf = const_cast<char*>(reinterpret_cast<char const*>(buf.data())),
+					};
+				}
+			));
+		// it may be non-blocking, so keep trying until we succeed
+		while (true)
+		{
+			DWORD bytes_sent;
+			int const send_res = WSASendTo(socket, buffers.data(),
+				static_cast<DWORD>(buffers.size()), &bytes_sent, 0,
+				endpoint.data(), sizeof(*endpoint.data()), nullptr,
+				nullptr);
+			if (send_res == 0)
+				break;
+			// we errored, see if it's because non-blocking
+			int const last_error = GetLastError();
+			if (last_error != WSAEWOULDBLOCK)
+			{
+				// error
+				ec = asio::error_code(last_error, asio::system_category());
+				return {};
+			}
+		};
+		// receive the response until we get it from the STUN server.
+		xor_mapped_address response;
+		// form the buffers
+		buffers = collect<std::vector<WSABUF>>(response.to_buffers() |
+			std::ranges::views::transform([](const asio::mutable_buffer& buf)
+				{
+					return WSABUF{
+						.len = static_cast<ULONG>(buf.size()),
+						.buf = reinterpret_cast<char*>(buf.data()),
+					};
+				}
+		));
+		// also keep track of the timeout :))))))
+		auto const start = std::chrono::system_clock::now();
+		while (true)
+		{
+			DWORD bytes_recvd;
+			sockaddr_in recv_addr{};
+			INT recv_len = sizeof(recv_addr);
+			DWORD flags = 0;
+			int const recv_res = WSARecvFrom(socket, buffers.data(),
+				static_cast<DWORD>(buffers.size()), &bytes_recvd, &flags,
+				reinterpret_cast<sockaddr*>(&recv_addr), &recv_len,
+				nullptr, nullptr);
+			if (recv_res == 0)
+			{
+				// ensure it's from the expected address
+				if (ntohl(recv_addr.sin_addr.S_un.S_addr) ==
+					endpoint.address().to_v4().to_uint() &&
+					ntohs(recv_addr.sin_port) == endpoint.port())
+					break;
+				// keep searching
+				continue;
+			}
+			// see if we timed out
+			if (std::chrono::duration_cast<std::chrono::seconds>(
+				std::chrono::system_clock::now() - start).count() >= 2)
+			{
+				ec = asio_miniSTUN::make_error_code(errc::timed_out);
+				break;
+			}
+			// we errored, see if it's because non-blocking
+			int const last_error = GetLastError();
+			if (last_error != WSAEWOULDBLOCK)
+			{
+				// error
+				ec = asio::error_code(last_error, asio::system_category());
+				return {};
+			}
+		}
+		// return recv timeout
+		if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, 
+			reinterpret_cast<char*>(&rcv_timeout), rcv_timeout_len) != 0)
+		{
+			ec = asio::error_code(GetLastError(), asio::system_category());
+			return {};
+		}
+		return asio::ip::udp::endpoint(response.addr(), response.port());
+	}
+#endif
 }
 
 #endif

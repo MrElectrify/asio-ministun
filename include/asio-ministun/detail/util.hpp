@@ -16,6 +16,19 @@
 
 namespace asio_miniSTUN::detail
 {
+	/// @brief Collects a range into a container
+	/// @tparam C The container type to collect into
+	/// @tparam R The range type
+	/// @param r The range
+	/// @return The container with the range
+	template<typename C, typename R>
+	C collect(R&& r)
+	{
+		C result;
+		std::ranges::copy(std::forward<R>(r), std::back_inserter(result));
+		return result;
+	}
+
 	/// @brief Concatenates arrays
 	/// @tparam Type The element type
 	/// @tparam sizes The sizes of the arrays
