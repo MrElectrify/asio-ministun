@@ -66,7 +66,8 @@ namespace asio_miniSTUN::detail
 	};
 
 	/// @brief Get the IP address from a STUN server. Preserves the socket's non-blocking
-	/// and connected state as long as the operation does not encounter an OS-level error
+	/// state as long as the operation does not encounter an OS-level error. The socket must
+	/// not be connected
 	/// @tparam CompletionToken The completion token type
 	/// @param socket The socket to use
 	/// @param endpoint The STUN server endpoint
@@ -78,29 +79,27 @@ namespace asio_miniSTUN::detail
 	{
 		enum class State
 		{
-			Connect,
 			SendRequest,
 			ReceiveResponse,
-			ConnectOriginal,
 			Cleanup,
 		};
 		// back-up socket traits
 		error_code ignored;
-		asio::ip::udp::endpoint connected_endpoint = socket.remote_endpoint(ignored);
 		bool non_blocking = socket.native_non_blocking();
 		// form request and response
 		auto request = std::make_unique<header>(message_class::request);
 		auto response = std::make_unique<xor_mapped_address>();
+		auto recv_endpoint = std::make_unique<asio::ip::udp::endpoint>();
 		return asio::async_compose<CompletionToken,
 			void(asio::error_code, asio::ip::udp::endpoint)>(
 				[
 					&socket,
 					endpoint,
-					connected_endpoint,
 					non_blocking,
 					request = std::move(request),
 					response = std::move(response),
-					state = State::Connect
+					recv_endpoint = std::move(recv_endpoint),
+					state = State::SendRequest
 				]
 				(
 					auto& self,
@@ -112,16 +111,15 @@ namespace asio_miniSTUN::detail
 						return self.complete(ec, asio::ip::udp::endpoint());
 					switch (state)
 					{
-					case State::Connect:
-					{
-						// fetch settings
-						state = State::SendRequest;
-						return socket.async_connect(endpoint, std::move(self));
-					}
 					case State::SendRequest:
 					{
+						error_code ignored;
+						// ensure the socket is not already connected
+						if (socket.remote_endpoint(ignored); !ignored)
+							return self.complete(asio_miniSTUN::make_error_code(
+								errc::already_connected), asio::ip::udp::endpoint());
 						state = State::ReceiveResponse;
-						return socket.async_send(request->to_const_buffers(), std::move(self));
+						return socket.async_send_to(request->to_const_buffers(), endpoint, std::move(self));
 					}
 					case State::ReceiveResponse:
 					{
@@ -129,21 +127,19 @@ namespace asio_miniSTUN::detail
 						if (bytes_transferred != request->size())
 							return self.complete(asio_miniSTUN::make_error_code(errc::bad_message),
 								asio::ip::udp::endpoint());
-						state = State::ConnectOriginal;
-						return socket.async_receive(response->to_buffers(), std::move(self));
+						state = State::Cleanup;
+						return socket.async_receive_from(response->to_buffers(), *recv_endpoint, std::move(self));
 					}
-					case State::ConnectOriginal:
+					case State::Cleanup:
 					{
+						// ignore unexpected responses
+						if (*recv_endpoint != endpoint)
+							return socket.async_receive_from(response->to_buffers(), *recv_endpoint, std::move(self));
 						// check received response
 						if (bytes_transferred != response->size() ||
 							response->headers().type() != message_class::response_success)
 							return self.complete(asio_miniSTUN::make_error_code(errc::bad_message),
 								asio::ip::udp::endpoint());
-						state = State::Cleanup;
-						return socket.async_connect(connected_endpoint, std::move(self));
-					}
-					case State::Cleanup:
-					{
 						// restore non-blocking
 						socket.native_non_blocking(non_blocking);
 						// call the success handler
