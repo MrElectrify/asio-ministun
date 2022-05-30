@@ -288,8 +288,7 @@ namespace asio_miniSTUN::detail
 				continue;
 			}
 			// see if we timed out
-			if (std::chrono::duration_cast<std::chrono::seconds>(
-				std::chrono::system_clock::now() - start).count() >= 2)
+			if ((std::chrono::system_clock::now() - start) >= timeout)
 			{
 				ec = asio_miniSTUN::make_error_code(errc::timed_out);
 				break;
